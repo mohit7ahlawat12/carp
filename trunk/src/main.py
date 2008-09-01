@@ -5,7 +5,12 @@ from google.appengine.ext import webapp
 from google.appengine.ext.webapp.util import run_wsgi_app
 from google.appengine.ext import db 
 from django.utils import simplejson
+import urllib
+from urlparse import urlparse
 
+import journeys
+import users
+ 
 def toNum(s):
     """Convert string to either int or float."""
     try:
@@ -14,62 +19,39 @@ def toNum(s):
         #Try float.
         ret = float(s)
     return ret
-
-class users(db.Model):
-    ukey = db.StringProperty()
-    email = db.EmailProperty()
-
-class journeys(db.Model):
-    jkey = db.StringProperty()
-    start = db.GeoPtProperty()
-    end = db.GeoPtProperty()
-    user = db.ReferenceProperty(users, collection_name='user_journeys')
-    
-
-
-class AddJourney(webapp.RequestHandler):
-    def post(self):
-        journey = journeys()
-        journey.start = db.GeoPt(self.request.get('slat'),self.request.get('slon')  )
-        ukey = self.request.get('ukey')
-        journey.user = users.get(db.Key(ukey))
-        journey.put()
-        journey.jkey = str(journey.key())
-        journey.put()
-        self.redirect('/display')
-        
+       
 class Display(webapp.RequestHandler):
     def get(self):
         self.response.out.write("""<html><body>""")
+        
         q = db.GqlQuery("SELECT * FROM users")
-        results = q.fetch(20)
-        for u in results:
-            self.response.out.write("<div>email %s /n ukey %s</div>" % (u.email,u.ukey))
-        
-        self.response.out.write("""<div>==================</div>""")
-        
-        q = db.GqlQuery("SELECT * FROM journeys")
-        results = q.fetch(20)
-        for j in results:
-            self.response.out.write("<div>slat: %s slon: %s jkey: %s</div>" % (j.start.lat, j.start.lon, j.jkey))
+        for u in q:
+            self.response.out.write("""<div>==========User==========</div>""")
+            self.response.out.write("<div>email %s | ukey %s</div>" % (u.email,u.ukey))
+            for j in u.user_journeys:
+                self.response.out.write("<div>====Journey: desc: %s | s: %s,%s | e: %s,%s | jkey: %s | ukey: %s</div>" % (j.desc, j.start.lat, j.start.lon, j.end.lat, j.end.lon, j.jkey, str(j.user.ukey)))
         self.response.out.write("""<body><html>""")
         
 class AddData(webapp.RequestHandler):
   def get(self):
     self.response.out.write("""<html><body>
           
-          <form action="/addu" method="post">
+          <form action="/rpc" method="get">
+            <div>function<input name="action" value="AddUser"></input></div>
             <div>email<input name="email"></input></div>
             <div><input type="submit" value="register"></div>
           </form>
           
-          <form action="/addj" method="post">
-            <div>slat<input name="slat"></input></div>
-            <div>slon<input name="slon"></input></div>
-            <div>uid<input name="ukey" value ="3"></input></div>
+          <form action="/rpc" method="get">
+            <div>function<input name="action" value="AddJourney"></input></div>
+            <div>desc<input name="desc" value="Home to Wits"></input></div>
+            <div>slat<input name="slat" value="-26.066763"></input></div>
+            <div>slon<input name="slon" value="28.051003"></input></div>
+            <div>elat<input name="elat" value="-26.18858"></input></div>
+            <div>elon<input name="elon" value="28.030286"></input></div>
+            <div>uid<input name="ukey" value ="agRjYXJwcgsLEgV1c2VycxgHDA"></input></div>
             <div><input type="submit" value="addj"></div>
           </form>
-        
         </body>
       </html>""")
     
@@ -83,27 +65,6 @@ class MainPage(webapp.RequestHandler):
           </form>
         </body>
       </html>""")
-    
-
-
-class Add(webapp.RequestHandler):
-    def post(self):
-        a = toNum(self.request.get('a'))
-        b = toNum(self.request.get('b'))
-        answer = a+b
-        self.response.out.write(answer)
-    def get(self):
-        a = toNum(self.request.get('a'))
-        b = toNum(self.request.get('b'))
-        answer = a+b
-        self.response.out.write(answer)
-        
-class Dummy(object):
-    __name__ = 'Dummy'
-    def __init__(self):
-        self.d1 = 'a'
-        self.d2 = 'b'
-        self.d3 = 'c'
 
 class JSON(webapp.RequestHandler):
   def get(self):
@@ -114,56 +75,55 @@ class JSON(webapp.RequestHandler):
     self.response.headers.add_header("Content-Type", "text/javascript")
 
 class RPCHandler(webapp.RequestHandler):
-  """ Allows the functions defined in the RPCMethods class to be RPCed."""
-
-  def __init__(self):
-    webapp.RequestHandler.__init__(self)
-    self.methods = RPCMethods()
+    def __init__(self):
+        webapp.RequestHandler.__init__(self)
+        self.methods = RPCMethods()
     
-  def get(self):
-    func = None
-    action = self.request.get('action')
-    if action:
-      if action[0] == '_':
-        self.error(403) # access denied
-        return
-      else:
-        func = getattr(self.methods, action, None)
-   
-    if not func:
-      self.error(404) # file not found
-      return
-     
-    args = ()
-    while True:
-      key = 'arg%d' % len(args)
-      val = self.request.get(key)
-      if val:
-        args += (simplejson.loads(val),)
-      else:
-        break
-    result = func(*args)
-    self.response.out.write(simplejson.dumps(result))
+    def get(self):
+        func = None
+        
+        url = urlparse(urllib.unquote_plus(self.request.url))
+        #Split parameters into a dictionary lookup: http://atomized.org/2008/06/parsing-url-query-parameters-in-python/
+        params = dict([part.split('=') for part in url[4].split('&')])
+        
+        action = params['action']
+        if action:
+          if action[0] == '_':
+            #Attempt to access restricted function
+            self.error(403) # access denied
+            return
+          else:
+            #idnetify function based on passed action
+            func = getattr(self.methods, action, None)
+       
+        if not func:
+            #Invalid action supplied
+          self.error(404) # file not found
+          return
 
+        #Call action and pass parameters 
+        result = func(params)
+        self.response.out.write(result)
+        
 class RPCMethods:
-  """ Defines the methods that can be RPCed.
+  """ Defines the public methods that can be called over HTTP
   NOTE: Do not allow remote callers access to private/protected "_*" methods.
   """
-  def Add(self, *args):
-    # The JSON encoding may have encoded integers as strings.
-    # Be sure to convert args to any mandatory type(s).
-    ints = [int(arg) for arg in args]
-    return sum(ints)
+  def __init__(self):
+    self.user_manager = users.UserManager()
+    self.journey_manager = journeys.JourneyManager()
 
+  def AddJourney(self,param):
+      return self.journey_manager.AddJourney(param['desc'],param['ukey'], param['slat'], param['slon'], param['elat'], param['elon'])
+  def AddUser(self,param):
+      return self.user_manager.Add(param['email'])
+  
 application = webapp.WSGIApplication(
                                      [('/', MainPage),
-                                      ('/rpc', RPCHandler),
                                       ('/addd',AddData),
-                                      ('/addu',AddUser),
-                                      ('/addj',AddJourney),
                                       ('/display',Display),
-                                      ('/json',JSON),
-                                      ('/add', Add)],
+                                      ('/rpc',RPCHandler),
+                                      ('/json',JSON)],
                                       debug=True)
 
 def main():
