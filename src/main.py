@@ -62,8 +62,9 @@ class MainPage(webapp.RequestHandler):
             <div><input name="a"></textarea></div>
             <div><input name="b"></textarea></div>
             <div><input type="submit" value="Add"></div>
-          </form>
-        </body>
+          </form>""")
+    self.response.out.write(jm.distancePts(10, 10, 10, 10, 'km'))
+    self.response.out.write("""</body>
       </html>""")
 
 class JSON(webapp.RequestHandler):
@@ -125,6 +126,8 @@ application = webapp.WSGIApplication(
                                       ('/rpc',RPCHandler),
                                       ('/json',JSON)],
                                       debug=True)
+
+jm = journeys.JourneyManager()
 
 def main():
   run_wsgi_app(application)
