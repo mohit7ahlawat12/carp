@@ -30,31 +30,39 @@ class JourneyManager():
     #@param threshold: maximum distance between either origin or destination
     def GetSimilarJourneys(self,jkey,num,units,threshold):
         
-        #list of resulting journeys
-        results = JourneyList(num)
+        #empty list of resulting journeys
+        results = JourneyResults(num)
         
         refj = journeys.get(db.Key(jkey))
-        #q = db.Query()
-        
-        #get co-ordinates of reference journey
-        orig_lat = refj.start.lat
-        orig_lon = refj.start.lon
-        dest_lat = refj.end.lat
-        dest_lon = refj.end.lon
-        
-        q = journeys.all()
-        for j in q:
-            #TODO: perform rough estimate first (improve performance)
-            #perform more accurate calculation
-            start_disp = distancePts(orig_lat,orig_lon,j.start.lat,j.start.lon,units)
-            end_disp = distancePts(dest_lat,dest_lon,j.end.lat,j.end.lon,units)
-            total_distance = start_distance + end_distance
+        if(refj != None):
+            #q = db.Query()
             
-            jour_disp = JourneyDisp(j,start_disp,end_disp)
+            #get co-ordinates of reference journey
+            orig_lat = refj.start.lat
+            orig_lon = refj.start.lon
+            dest_lat = refj.end.lat
+            dest_lon = refj.end.lon
             
-            if(jour_disp.total_disp < threshold):
-                #Update reference list
-                results.insert(jour_disp)
+#            q = journeys.gql("""WHERE jkey != :jk""" 
+#                      "AND ANCESTOR IS :u"""
+#                      ,jk=jkey, u = refj.user)
+            
+            #iterate over journeys
+            q = journeys.all()
+            for j in q:
+                #don't check reference journey or users journeys
+                if((refj.user.ukey != j.user.ukey) and (refj.jkey != j.jkey)):
+                    #TODO: perform rough estimate first (improve performance)
+                    #perform more accurate calculation
+                    start_disp = self.distancePts(orig_lat,orig_lon,j.start.lat,j.start.lon,units)
+                    end_disp = self.distancePts(dest_lat,dest_lon,j.end.lat,j.end.lon,units)
+                    total_disp = start_disp + end_disp
+                    precision = 4
+                    result = JourneyResult(j,start_disp,end_disp,precision)
+                
+                    if(result.total_disp < threshold):
+                        #Update results list
+                        results.insert(result)
         
         return results
     
@@ -69,58 +77,68 @@ class JourneyManager():
         
         distance = (factor*acos(cos(radians(lat1))*cos(radians(lat2))*cos(radians(lon2) - radians(lon1)) + sin(radians(lat1)) * sin(radians( lat2))))
 
-        #set precision
-        getcontext().prec = 4
+
         return Decimal(str(distance))
      
 #Simple container object to store a journey reference and the total displacement for distance comparison
-class JourneyDisp:
+class JourneyResult:
     #@param journey: a journey being compared
     #@param total_disp: Total displacement of this journey from the reference journey 
-    def __init__(self,journey,start_disp,end_disp):
+    def __init__(self,journey,start_disp,end_disp,precision):
+        #set precision
+        getcontext().prec = precision
         self.journey = journey
-        self.start_disp = start_disp
-        self.end_disp = end_disp
+        self.start_disp = start_disp * 1
+        self.end_disp = end_disp * 1
         self.total_disp = start_disp + end_disp
         
 #Container of journeys, limited in size. Where limit is reached, largest item is removed. Inserts in order or increasing distance 
-#if disp <= range: jl.insert(JourDisp(j,disp))
-#Class ensures that the top journeys are returned in order
-class JourneyList:
+#Class ensures that the shortest journeys are returned in order
+class JourneyResults:
     def __init__(self,capacity):
         #maximum number of journeys
         self.capacity = capacity
         #container of resulting journeys
         self.journey_list = []
-        #maximum acceptable displacement between points
-        self._max_disp = None
-        
-    def insert(self,jour_disp):
-        if self._max_disp == None:
+        #longest displacement of journey in journey list
+        self.max_disp = None
+    
+    #Insert a journey result into this container. If capacity is reached then largest item is removed.
+    #Items inserted into journey_list in order
+    def insert(self,jour_result):
+        if (self.max_disp == None):
             #First item in list
-            self.journeys.append(jour_disp)
+            self.journey_list.append(jour_result)
             #update the maximum displacement
-            self.max_disp = jour_disp.total_disp
+            self.max_disp = jour_result.total_disp
             return True
         else:
-            if (self.journeys.len() < self.capacity):
+            if (len(self.journey_list) < self.capacity):
                 #new max distance item, but no need to pop largest from list
-               self.__orderedInsert(jour_disp)
-            elif (jour_disp.total_disp < max_dist) and (self.journeys.len() >= self.capacity):
+               self.__orderedInsert(jour_result)
+            elif (jour_result.total_disp < self.max_disp) and (len(self.journey_list) >= self.capacity):
                 #shorter journey, capacity reached, pop largest item off
-                self.__orderedInsert(jour_disp)
-                journeys.pop()
+                self.__orderedInsert(jour_result)
+                self.journey_list.pop()
 
     #max: append, otherwise insert
-    def __orderedInsert(self,jour_disp):
-        pos = 0
-        for jd in self.journey_list:
-            if jour_disp.total_disp > jd.total_disp:
-                journeys.insert(pos,jour_disp)
-                break
-            pos += 1
-            
-        if(self.max_disp < jour_disp.total_disp):
-            #update the maximum displacement
-            self.max_disp = jour_disp.total_disp
-            
+    #TODO: check
+    #ordered insert to list from min to max displacement
+    def __orderedInsert(self,journey_result):
+        if (len(self.journey_list) < self.capacity):    
+            #simple if item 
+            if(journey_result.total_disp >= self.max_disp):
+                #update the maximum displacement, append to end of list
+                self.max_disp = journey_result.total_disp
+                self.journey_list.append(journey_result)
+            else:    
+                        
+                #insert in ordered position
+                #if smaller than current, insert in previous position
+                pos = 0
+                for jr in self.journey_list:
+                    #if < current, place before else check next
+                    if (journey_result.total_disp <= jr.total_disp):
+                        self.journey_list.insert(pos,journey_result)
+                        break
+                    pos += 1

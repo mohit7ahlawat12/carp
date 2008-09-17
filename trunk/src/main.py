@@ -57,13 +57,12 @@ class AddData(webapp.RequestHandler):
     
 class MainPage(webapp.RequestHandler):
   def get(self):
-    self.response.out.write("""<html><body>
-          <form action="/addj" method="post">
-            <div><input name="a"></textarea></div>
-            <div><input name="b"></textarea></div>
-            <div><input type="submit" value="Add"></div>
-          </form>""")
-    self.response.out.write(jm.distancePts(10, 10, 10, 10, 'km'))
+    self.response.out.write("""<html><body>""")
+    jm = journeys.JourneyManager()
+    js = jm.GetSimilarJourneys("agRjYXJwcg4LEghqb3VybmV5cxgCDA", 4, "km",14)    
+    for j in js.journey_list:
+        self.response.out.write("<br />==========<br />" +j.journey.desc + "<br />sd: " + str(j.start_disp) +"<br />ed:"+ str(j. end_disp) + "<br />td: " + str(j.total_disp))
+        self.response.out.write("<br /> user: " + j.journey.user.ukey)
     self.response.out.write("""</body>
       </html>""")
 
